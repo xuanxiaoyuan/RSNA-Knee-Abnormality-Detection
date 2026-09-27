@@ -133,6 +133,14 @@ def load_model(model_name, dtype_name, enable_thinking):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
+    # A crashed run in the same kernel keeps its model alive: the retained
+    # traceback holds main()'s frame, which holds the model. The next load then
+    # lands on top of ~8GB that was never freed. Reporting free memory first
+    # makes that failure self-evident instead of looking like a batch problem.
+    if torch.cuda.is_available():
+        free, total = torch.cuda.mem_get_info()
+        print(f"[gpu] {free / 1e9:.1f} GB free of {total / 1e9:.1f} GB before loading")
+
     dtype = {"float16": torch.float16, "bfloat16": torch.bfloat16}.get(
         dtype_name, torch.float16
     )
