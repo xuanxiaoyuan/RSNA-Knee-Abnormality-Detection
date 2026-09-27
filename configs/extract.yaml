@@ -18,7 +18,13 @@ model_name: Qwen/Qwen3-4B-Instruct-2507
 
 # T4 is Turing: it has no bf16 units, so fp16 is the correct dtype here.
 dtype: float16
-batch_size: 16
+
+# Memory is set by the LONGEST report in a batch, not the average: padding
+# stretches every sequence in the batch to that length. The longest training
+# report is 4743 chars, so a batch of 16 can want ~7GB of KV cache on top of the
+# ~8GB of fp16 weights, which is over a T4's 14.5GB. 4 keeps the worst batch
+# near 10GB. This already OOMed at 16 on a 58-study probe.
+batch_size: 4
 
 # The answer is 12 characters. The budget exists only to survive a model that
 # emits a  thinking block despite being told not to.
