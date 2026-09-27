@@ -1,4 +1,4 @@
-v4-nested-input-paths 2026-09-27
+v5-numeric-answer-recovery 2026-09-27
 
 Bump this line whenever the pipeline changes. The Kaggle dataset that feeds
 this code is refreshed by hand, so a run can silently use stale code; every

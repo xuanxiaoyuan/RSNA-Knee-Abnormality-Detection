@@ -55,6 +55,7 @@ FINDING_SPECS = [
 THINK_BLOCK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 EXACT_BITS = re.compile(r"(?<![01])[01]{12}(?![01])")
 LOOSE_BITS = re.compile(r"[01]{12}")
+NUMERIC_ANSWER = re.compile(r"[01]{1,12}(?:\.0+)?")
 
 
 def build_prompt(report, max_chars):
@@ -89,6 +90,11 @@ def build_prompt(report, max_chars):
         f"{report}\n"
         '"""\n\n'
         "Answer with exactly 12 characters, each 0 or 1, in the order 1-12 above.\n"
+        "Write out all 12 characters, including any leading zeros. This is a "
+        "STRING of characters, not a number: never drop leading zeros, never "
+        "write a decimal point or a trailing .0.\n"
+        "For example, if findings 3 and 11 are present and the other ten are "
+        "absent, the answer is exactly 001000000010\n"
         "Output nothing else: no explanation, no spaces, no punctuation."
     )
 
@@ -96,10 +102,9 @@ def build_prompt(report, max_chars):
 def parse_answer(text):
     """Pull the 12 bits out of a generation.
 
-    Returns (bits, mode) where mode is 'exact', 'loose' or 'fail'. The loose
-    path exists because a model that wraps the answer in prose should not cost
-    us the study, but loose parses are counted separately so they can be
-    inspected rather than silently trusted.
+    Returns (bits, mode) where mode is 'exact', 'padded', 'loose' or 'fail'.
+    Anything but 'exact' is an inference rather than a clean read, so the modes
+    are counted separately and can be inspected instead of silently trusted.
     """
     if not text:
         return None, "fail"
@@ -107,6 +112,16 @@ def parse_answer(text):
     match = EXACT_BITS.search(cleaned)
     if match:
         return [int(c) for c in match.group(0)], "exact"
+
+    # The model sometimes renders the 12 bits as a NUMBER, which drops leading
+    # zeros and appends ".0" -- 001011110100 comes back as "1011110100.0".
+    # Recover that only when the entire answer is the number: a looser rule
+    # would happily mine 0s and 1s out of prose.
+    bare = cleaned.strip()
+    if NUMERIC_ANSWER.fullmatch(bare):
+        digits = bare.split(".")[0]
+        return [int(c) for c in digits.rjust(12, "0")], "padded"
+
     digits = re.sub(r"[^01]", "", cleaned)
     fallback = LOOSE_BITS.search(digits)
     if fallback:
@@ -225,7 +240,7 @@ def main():
     max_new = int(cfg.get("max_new_tokens", 32))
 
     rows = list(done.to_dict("records")) if len(done) else []
-    tally = {"exact": 0, "loose": 0, "fail": 0}
+    tally = {"exact": 0, "padded": 0, "loose": 0, "fail": 0}
     started = time.time()
 
     for start in tqdm(range(0, len(todo), batch_size), desc="labelling"):
@@ -265,8 +280,8 @@ def main():
         save(pd.DataFrame(rows), output_path)
 
     elapsed = time.time() - started
-    print(f"[parse] exact={tally['exact']} loose={tally['loose']} fail={tally['fail']}")
-    if tally["fail"] or tally["loose"]:
+    print("[parse] " + "  ".join(f"{k}={v}" for k, v in tally.items()))
+    if tally["fail"] or tally["loose"] or tally["padded"]:
         print("[parse] inspect labels_derived.csv rows where parse_mode != 'exact'")
     print(f"[time] {elapsed / 60:.1f} min for {len(todo)} reports "
           f"({elapsed / max(len(todo), 1):.2f} s/report)")
