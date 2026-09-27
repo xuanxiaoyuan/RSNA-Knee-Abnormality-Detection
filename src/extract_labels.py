@@ -38,13 +38,18 @@ FINDING_SPECS = [
     ("Medial Meniscus", "tear, meaning abnormal signal that contacts the "
                         "meniscal surface. Degeneration without surface "
                         "contact = 0"),
-    ("Lateral Meniscus", "same criterion as the medial meniscus"),
+    ("Lateral Meniscus", "tear, meaning abnormal signal that contacts the "
+                         "meniscal surface. Degeneration without surface "
+                         "contact = 0"),
     ("Medial OA", "moderate or large area (about 1 cm or more) of high-grade "
                   "cartilage loss (>50% thickness) in the MEDIAL tibiofemoral "
                   "compartment. Mild thinning or chondral irregularity = 0"),
-    ("Lateral OA", "same criterion as Medial OA, in the LATERAL tibiofemoral "
-                   "compartment"),
-    ("PF OA", "same criterion as Medial OA, in the PATELLOFEMORAL compartment"),
+    ("Lateral OA", "moderate or large area (about 1 cm or more) of high-grade "
+                   "cartilage loss (>50% thickness) in the LATERAL tibiofemoral "
+                   "compartment. Mild thinning or chondral irregularity = 0"),
+    ("PF OA", "moderate or large area (about 1 cm or more) of high-grade "
+              "cartilage loss (>50% thickness) in the PATELLOFEMORAL "
+              "compartment. Mild thinning or chondral irregularity = 0"),
     ("Effusion", "moderate or large joint effusion. Small or trace effusion = 0"),
     ("Synovitis", "synovitis"),
     ("Baker's", "moderate or large Baker cyst. Small cyst = 0"),
@@ -80,6 +85,16 @@ def build_prompt(report, max_chars):
         "question: a finding that is mentioned but below threshold counts as 0.\n\n"
         f"{listing}\n\n"
         "Rules:\n"
+        "- MOST FINDINGS ARE ABSENT. Across this dataset only about a third of "
+        "the 12 slots are positive in a given report, and some findings (MCL, "
+        "Baker's) are rare. Answer 1 only when the report clearly describes the "
+        "finding at or above the threshold.\n"
+        "- The most common error is counting a below-threshold mention as "
+        "present. Words like small, mild, low-grade, trace, minimal, minor, "
+        "subtle, slight, and mild degenerative change mean 0, even though the "
+        "finding is mentioned. Only moderate, large, severe, high-grade, "
+        "complete or full-thickness findings meet the thresholds.\n"
+        "- If you are unsure whether the threshold is met, answer 0.\n"
         "- A finding that is explicitly denied (\"no fracture\") counts as 0.\n"
         "- A finding raised only as a question or a differential, and not "
         "confirmed, counts as 0.\n"
