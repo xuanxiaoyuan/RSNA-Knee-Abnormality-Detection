@@ -5,6 +5,11 @@ __pycache__/
 *.npy
 .ipynb_checkpoints/
 
+# Kaggle API credentials. This repo is public: committing this would publish
+# the account key. Never remove this line.
+kaggle.json
+.kaggle/
+
 # The competition data must never be committed. This repo is public, and
 # redistributing the dataset breaches the competition rules.
 data/

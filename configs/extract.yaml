@@ -1,0 +1,37 @@
+# Report -> label extraction.
+#
+# One-time offline job. Runs in a Kaggle notebook with Internet ON (it has to
+# fetch the model weights), which is fine: this is NOT the submission notebook.
+# The submission runs offline and only reads the CSV this produces.
+
+data_dir: /kaggle/input/rsna-knee-abnormality-detection
+local_dir: data
+work_dir: /kaggle/working
+
+# Qwen3 is Apache-2.0 and is the family most often validated for structured
+# extraction from multilingual clinical text. 4B in fp16 is ~8GB, which leaves
+# room on a single T4 and keeps throughput sane on a 30h/week quota.
+# Confirm the exact repo id on HuggingFace before the first run.
+model_name: Qwen/Qwen3-4B-Instruct-2507
+
+# T4 is Turing: it has no bf16 units, so fp16 is the correct dtype here.
+dtype: float16
+batch_size: 16
+
+# The answer is 12 characters. The budget exists only to survive a model that
+# emits a  thinking block despite being told not to.
+max_new_tokens: 32
+enable_thinking: false
+
+# Longest report seen is well under this; the cap keeps one pathological
+# document from blowing up the batch's memory.
+max_report_chars: 8000
+
+output: labels_derived.csv
+
+# Smoke test: set to e.g. 20 to prove the path works before spending hours.
+limit: null
+
+# Skip studies already present in the output file, so a killed session
+# (12h cap) can be resumed instead of restarted.
+resume: true
