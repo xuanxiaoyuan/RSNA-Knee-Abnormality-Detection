@@ -194,6 +194,9 @@ def main():
     parser.add_argument("--config", default="configs/extract.yaml")
     parser.add_argument("--limit", type=int, default=None,
                         help="only label the first N studies (smoke test)")
+    parser.add_argument("--only-gold", action="store_true",
+                        help="label only the studies that already carry gold labels, "
+                             "for a one-minute quality probe via eval_extractor.py")
     parser.add_argument("--model", default=None, help="override model_name")
     args = parser.parse_args()
 
@@ -217,6 +220,15 @@ def main():
         print(f"[warn] finding order differs from submission columns")
         print(f"[warn]   prompt order: {spec_names}")
         print(f"[warn]   submission:   {labels}")
+
+    if args.only_gold:
+        # Cheap quality probe: the gold studies are the only ones we can score
+        # against, so labelling just those answers "is the prompt any good?"
+        # in a minute instead of spending an hour before finding out.
+        present = [c for c in labels if c in train.columns]
+        gold_ids = set(train.loc[train[present].notna().all(axis=1), "StudyInstanceUID"])
+        train = train[train["StudyInstanceUID"].isin(gold_ids)]
+        print(f"[gold] restricting to the {len(gold_ids)} gold-labelled studies")
 
     output_path = Path(cfg.get("work_dir", "work")) / cfg.get("output", "labels_derived.csv")
     done = read_done(output_path, bool(cfg.get("resume", True)))
