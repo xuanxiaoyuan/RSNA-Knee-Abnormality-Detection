@@ -4,7 +4,9 @@
 # fetch the model weights), which is fine: this is NOT the submission notebook.
 # The submission runs offline and only reads the CSV this produces.
 
-data_dir: /kaggle/input/rsna-knee-abnormality-detection
+# Kaggle nests inputs by type. If this ever 404s, resolve_data_dir falls back
+# to scanning /kaggle/input for sample_submission.csv.
+data_dir: /kaggle/input/competitions/rsna-knee-abnormality-detection
 local_dir: data
 work_dir: /kaggle/working
 

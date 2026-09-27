@@ -35,29 +35,47 @@ def load_config(path):
     return cfg
 
 
-def resolve_data_dir(cfg, search_roots=("/kaggle/input",)):
+def _find_data_root(root, marker="sample_submission.csv", max_depth=3):
+    """Depth-capped search for the directory that holds `marker`.
+
+    The cap is load-bearing. An unbounded walk would descend into the DICOM
+    trees — tens of thousands of series directories — before giving up.
+    """
+    root = Path(root)
+    for dirpath, dirnames, filenames in os.walk(root):
+        rel = Path(dirpath).relative_to(root)
+        depth = 0 if rel == Path(".") else len(rel.parts)
+        if marker in filenames:
+            return Path(dirpath)
+        if depth + 1 >= max_depth:
+            dirnames[:] = []
+    return None
+
+
+def resolve_data_dir(cfg, search_roots=("/kaggle/input",), max_depth=3):
     """Find the directory that actually holds the competition data.
 
-    Trusts cfg['data_dir'] first, then falls back to scanning /kaggle/input.
-    That fallback is what keeps the pipeline working when the mount point or
-    the competition slug differs from what is written in the config.
+    Trusts cfg['data_dir'] first, then scans search_roots. The scan is not a
+    nicety: Kaggle nests inputs by type, so competition data lands at
+    /kaggle/input/competitions/<slug> and datasets at
+    /kaggle/input/datasets/<owner>/<slug>. That layout has already moved once
+    and the config's path silently went stale with it.
     """
-    candidates = []
     configured = cfg.get("data_dir")
-    if configured:
-        candidates.append(Path(configured))
+    if configured and (Path(configured) / "sample_submission.csv").exists():
+        return Path(configured)
+
+    searched = []
     for root in search_roots:
         root = Path(root)
         if not root.is_dir():
             continue
-        candidates.extend(sorted(p for p in root.iterdir() if p.is_dir()))
-        candidates.append(root)
-    for cand in candidates:
-        if (cand / "sample_submission.csv").exists():
-            return cand
+        found = _find_data_root(root, max_depth=max_depth)
+        if found:
+            return found
+        searched.append(root)
     raise FileNotFoundError(
-        "no sample_submission.csv found; searched: "
-        + ", ".join(str(c) for c in candidates)
+        "no sample_submission.csv found under: " + ", ".join(str(s) for s in searched)
     )
 
 

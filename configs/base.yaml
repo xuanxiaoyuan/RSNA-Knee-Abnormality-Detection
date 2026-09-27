@@ -1,10 +1,11 @@
 # RSNA Knee Abnormality Detection — base config
 #
-# data_dir: competition data mount. resolve_data_dir() falls back to scanning
-# /kaggle/input for whatever directory holds sample_submission.csv, so this can
-# be stale without breaking anything.
+# data_dir: competition data mount. Kaggle nests inputs by type, hence the
+# competitions/ segment. resolve_data_dir() falls back to scanning /kaggle/input
+# for whatever directory holds sample_submission.csv, so this can be stale
+# without breaking anything.
 # local_dir: where the (tiny) metadata CSVs live when working off-Kaggle.
-data_dir: /kaggle/input/rsna-knee-abnormality-detection
+data_dir: /kaggle/input/competitions/rsna-knee-abnormality-detection
 local_dir: data
 work_dir: /kaggle/working
 
