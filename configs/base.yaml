@@ -1,0 +1,54 @@
+# RSNA Knee Abnormality Detection — base config
+#
+# data_dir: competition data mount. resolve_data_dir() falls back to scanning
+# /kaggle/input for whatever directory holds sample_submission.csv, so this can
+# be stale without breaking anything.
+# local_dir: where the (tiny) metadata CSVs live when working off-Kaggle.
+data_dir: /kaggle/input/rsna-knee-abnormality-detection
+local_dir: data
+work_dir: /kaggle/working
+
+seed: 42
+
+# ---- DEBUG: route every Kaggle run through this until the path is clean ----
+# Small subset, capped steps. Validates the whole pipeline in minutes rather
+# than burning an hour of the weekly GPU quota on a shape error.
+debug: true
+debug_n_studies: 24
+debug_max_steps: 2
+
+# ---- data / preprocessing ----
+img_size: 224
+slices_per_series: 6      # decoded and kept per series
+max_series: 4             # series slots kept per study
+series_slot_keys:         # which columns define a distinct series "slot"
+  - Anatomical_Plane
+  - Fluid_Sensitive
+  - Fat_Suppression
+train_series_root: train_series
+test_series_root: test_series
+
+# ---- model ----
+backbone: resnet34
+pretrained: true
+dropout: 0.2
+
+# For the OFFLINE submission run timm cannot download weights. Attach a dataset
+# holding the timm cache and point this at it, e.g. /kaggle/input/timm-cache.
+# Leave null to use the default location.
+torch_home: null
+
+# ---- optimisation ----
+batch_size: 4
+epochs: 4
+lr: 0.0003
+weight_decay: 0.0001
+num_workers: 2
+amp: true
+
+# ---- validation ----
+# Grouped split is mandatory: random K-fold lets the model memorise the scanner
+# and inflates macro-AUC by a lot. Groups come from DICOM headers, cached to
+# work_dir/study_groups.csv so later runs skip the header pass.
+n_folds: 5
+fold: 0

@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pth
+*.pt
+*.npy
+.ipynb_checkpoints/
+
+# The competition data must never be committed. This repo is public, and
+# redistributing the dataset breaches the competition rules.
+data/
+train.csv
+train_series.csv
+test.csv
+test_series.csv
+sample_submission.csv

@@ -1,0 +1,20 @@
+# The Kaggle image already ships most of these; this file documents the
+# dependency set rather than pinning it, because the submission run has no
+# internet and therefore cannot pip install anything.
+#
+# Local development (metadata only, no pixels) needs just the first group.
+numpy
+pandas
+pyyaml
+pydicom
+scikit-learn
+
+# Kaggle run only.
+torch
+torchvision
+timm
+opencv-python-headless
+tqdm
+
+# Local convenience: fetching the metadata CSVs.
+kaggle
