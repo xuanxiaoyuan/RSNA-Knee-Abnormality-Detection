@@ -1,0 +1,10 @@
+RSNA-KNEE CODE-DATASET REFRESH PROBE
+
+marker: REFRESH-TEST-OK
+written: 2026-09-27
+
+If you can read this file from /kaggle/input/<your-code-dataset>/VERSION
+and it says REFRESH-TEST-OK, then:
+  GitHub push -> Kaggle dataset refresh  WORKS, and the refresh is manual.
+
+If you cannot find this file at all, the dataset has NOT been refreshed yet.
