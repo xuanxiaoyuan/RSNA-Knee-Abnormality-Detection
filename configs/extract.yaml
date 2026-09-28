@@ -26,10 +26,13 @@ dtype: float16
 # near 10GB. This already OOMed at 16 on a 58-study probe.
 batch_size: 4
 
-# The answer is now 12 lines of "name: bit - reason", so the budget has to fit
-# the reasons, not just the bits. Too small a budget truncates mid-line and the
-# findings past the cut come back unread (-1), which eval then drops.
-max_new_tokens: 320
+# The answer is 12 lines of "name: bit - reason". At 320 the run truncated: the
+# tail findings (Fracture 41/58, Contusion 30/58, Baker's 25/58) came back
+# unread, and unread cells are dropped by eval, which inflates the scorecard.
+# The prompt now caps each reason at six words (~180 tokens for all 12 lines),
+# so this budget is deliberately generous: it is the headroom that keeps a
+# chatty generation from eating the last lines.
+max_new_tokens: 512
 enable_thinking: false
 
 # Longest report seen is well under this; the cap keeps one pathological

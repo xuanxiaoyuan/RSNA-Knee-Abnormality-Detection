@@ -109,18 +109,20 @@ def build_prompt(report, max_chars):
         '"""\n\n'
         "Answer with exactly 12 lines, one per finding, in the order 1-12 above, "
         "each in this format:\n"
-        "1 ACL: 0 - short reason quoting the report\n"
-        "2 MCL: 1 - short reason quoting the report\n"
+        "1 ACL: 0 - no tear described\n"
+        "2 MCL: 1 - high-grade tear\n"
         "...and so on through 12.\n\n"
         "Each line must be: the number from the list, the finding name exactly as "
-        "written above, a colon, then 0 or 1, then a dash and a brief reason taken "
-        "from the report. You are judged on the 0 or the 1, but writing the reason "
-        "is what forces you to check whether the report actually meets the "
-        "threshold - so make it say WHY, quoting the report's own words.\n"
+        "written above, a colon, then 0 or 1, then a dash and a reason of AT MOST "
+        "SIX WORDS. You are judged on the 0 or the 1, but the reason is what "
+        "forces you to check whether the report actually meets the threshold - so "
+        "let those few words quote what decided it.\n"
         "0 = absent, explicitly denied, or mentioned only below the threshold. "
         "1 = present at or above the threshold.\n"
-        "Write all 12 lines, in order. Do not skip any. Do not add a summary, a "
-        "conclusion, or anything after the twelfth line."
+        "Write all 12 lines, in order, and never skip a line. If you are running "
+        "out of room, stop writing reasons and finish the remaining lines as just "
+        "\"N Name: 0\" or \"N Name: 1\" - but do NOT stop before line 12.\n"
+        "Do not add a summary, a conclusion, or anything after the twelfth line."
     )
 
 

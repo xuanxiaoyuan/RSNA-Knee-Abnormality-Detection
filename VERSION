@@ -1,4 +1,4 @@
-v10-named-verdicts 2026-09-28
+v11-short-reasons 2026-09-28
 
 Bump this line whenever the pipeline changes. The Kaggle dataset that feeds
 this code is refreshed by hand, so a run can silently use stale code; every
