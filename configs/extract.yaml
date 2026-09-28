@@ -26,9 +26,10 @@ dtype: float16
 # near 10GB. This already OOMed at 16 on a 58-study probe.
 batch_size: 4
 
-# The answer is 12 characters. The budget exists only to survive a model that
-# emits a  thinking block despite being told not to.
-max_new_tokens: 32
+# The answer is now 12 lines of "name: bit - reason", so the budget has to fit
+# the reasons, not just the bits. Too small a budget truncates mid-line and the
+# findings past the cut come back unread (-1), which eval then drops.
+max_new_tokens: 320
 enable_thinking: false
 
 # Longest report seen is well under this; the cap keeps one pathological

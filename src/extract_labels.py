@@ -58,9 +58,12 @@ FINDING_SPECS = [
 ]
 
 THINK_BLOCK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
-EXACT_BITS = re.compile(r"(?<![01])[01]{12}(?![01])")
-LOOSE_BITS = re.compile(r"[01]{12}")
-NUMERIC_ANSWER = re.compile(r"[01]{1,12}(?:\.0+)?")
+
+# One finding per line: optional bullet/number, the finding name, a separator,
+# then the verdict. Requiring the separator (":", "=", "-") and anchoring at the
+# line start keeps a finding named inside another finding's *reason* from being
+# mistaken for that finding's own verdict.
+VERDICT_LINE = r"^[\s>*-]*(?:\d{{1,2}}\s*[.)\]:]?\s*)?{name}\s*[^\n:;]{{0,15}}?[:=\-–—]\s*([01])(?![01])"
 
 
 def build_prompt(report, max_chars):
@@ -104,44 +107,53 @@ def build_prompt(report, max_chars):
         '"""\n'
         f"{report}\n"
         '"""\n\n'
-        "Answer with exactly 12 characters, each 0 or 1, in the order 1-12 above.\n"
-        "Write out all 12 characters, including any leading zeros. This is a "
-        "STRING of characters, not a number: never drop leading zeros, never "
-        "write a decimal point or a trailing .0.\n"
-        "For example, if findings 3 and 11 are present and the other ten are "
-        "absent, the answer is exactly 001000000010\n"
-        "Output nothing else: no explanation, no spaces, no punctuation."
+        "Answer with exactly 12 lines, one per finding, in the order 1-12 above, "
+        "each in this format:\n"
+        "1 ACL: 0 - short reason quoting the report\n"
+        "2 MCL: 1 - short reason quoting the report\n"
+        "...and so on through 12.\n\n"
+        "Each line must be: the number from the list, the finding name exactly as "
+        "written above, a colon, then 0 or 1, then a dash and a brief reason taken "
+        "from the report. You are judged on the 0 or the 1, but writing the reason "
+        "is what forces you to check whether the report actually meets the "
+        "threshold - so make it say WHY, quoting the report's own words.\n"
+        "0 = absent, explicitly denied, or mentioned only below the threshold. "
+        "1 = present at or above the threshold.\n"
+        "Write all 12 lines, in order. Do not skip any. Do not add a summary, a "
+        "conclusion, or anything after the twelfth line."
     )
 
 
-def parse_answer(text):
-    """Pull the 12 bits out of a generation.
+def parse_answer(text, spec_names):
+    """Read the per-finding verdicts out of a generation.
 
-    Returns (bits, mode) where mode is 'exact', 'padded', 'loose' or 'fail'.
-    Anything but 'exact' is an inference rather than a clean read, so the modes
-    are counted separately and can be inspected instead of silently trusted.
+    Returns (bits, mode): `bits` is aligned to spec_names and holds -1 for any
+    finding that could not be read, and mode is 'named' (all 12 read),
+    'partial' (some) or 'fail' (none).
+
+    Reading by NAME is the point of the format. A positional 12-character
+    answer has no redundancy: one slip in the model's latent state flips several
+    findings at once, which is exactly what the gold probe showed. A named line
+    cannot land on the wrong finding, and unread findings stay -1 so eval
+    excludes them instead of scoring them as a confident 0.
     """
     if not text:
         return None, "fail"
-    cleaned = THINK_BLOCK.sub(" ", text)
-    match = EXACT_BITS.search(cleaned)
-    if match:
-        return [int(c) for c in match.group(0)], "exact"
+    cleaned = THINK_BLOCK.sub("\n", text)
 
-    # The model sometimes renders the 12 bits as a NUMBER, which drops leading
-    # zeros and appends ".0" -- 001011110100 comes back as "1011110100.0".
-    # Recover that only when the entire answer is the number: a looser rule
-    # would happily mine 0s and 1s out of prose.
-    bare = cleaned.strip()
-    if NUMERIC_ANSWER.fullmatch(bare):
-        digits = bare.split(".")[0]
-        return [int(c) for c in digits.rjust(12, "0")], "padded"
+    bits = {}
+    for name in spec_names:
+        pattern = re.compile(
+            VERDICT_LINE.format(name=re.escape(name)), re.IGNORECASE | re.MULTILINE
+        )
+        match = pattern.search(cleaned)
+        if match:
+            bits[name] = int(match.group(1))
 
-    digits = re.sub(r"[^01]", "", cleaned)
-    fallback = LOOSE_BITS.search(digits)
-    if fallback:
-        return [int(c) for c in fallback.group(0)], "loose"
-    return None, "fail"
+    if not bits:
+        return None, "fail"
+    mode = "named" if len(bits) == len(spec_names) else "partial"
+    return [bits.get(name, -1) for name in spec_names], mode
 
 
 def load_model(model_name, dtype_name, enable_thinking):
@@ -275,7 +287,8 @@ def main():
     max_new = int(cfg.get("max_new_tokens", 32))
 
     rows = list(done.to_dict("records")) if len(done) else []
-    tally = {"exact": 0, "padded": 0, "loose": 0, "fail": 0}
+    tally = {"named": 0, "partial": 0, "fail": 0}
+    missing = 0
     started = time.time()
 
     for start in tqdm(range(0, len(todo), batch_size), desc="labelling"):
@@ -298,26 +311,28 @@ def main():
         decoded = tokenizer.batch_decode(gen, skip_special_tokens=True)
 
         for study_uid, text in zip(chunk["StudyInstanceUID"], decoded):
-            bits, mode = parse_answer(text)
+            bits, mode = parse_answer(text, spec_names)
             tally[mode] += 1
-            record = {"StudyInstanceUID": study_uid}
             if bits is None:
-                # Leave the row in with an explicit marker rather than a silent
-                # 0.0, which would look like a confident negative.
-                record.update({name: -1 for name in spec_names})
-                record["parse_mode"] = "fail"
-                record["raw_output"] = text[:200]
-            else:
-                record.update(dict(zip(spec_names, bits)))
-                record["parse_mode"] = mode
+                bits = [-1] * len(spec_names)
+            # A finding we could not read stays -1 rather than becoming a silent
+            # 0.0, which would look like a confident negative.
+            missing += sum(1 for bit in bits if bit < 0)
+            record = {"StudyInstanceUID": study_uid}
+            record.update(dict(zip(spec_names, bits)))
+            record["parse_mode"] = mode
+            if -1 in bits:
+                record["raw_output"] = text[:300]
             rows.append(record)
 
         save(pd.DataFrame(rows), output_path)
 
     elapsed = time.time() - started
-    print("[parse] " + "  ".join(f"{k}={v}" for k, v in tally.items()))
-    if tally["fail"] or tally["loose"] or tally["padded"]:
-        print("[parse] inspect labels_derived.csv rows where parse_mode != 'exact'")
+    print("[parse] " + "  ".join(f"{k}={v}" for k, v in tally.items())
+          + f"  unread_cells={missing}")
+    if missing:
+        print("[parse] unread cells are excluded by eval_extractor.py, so a high "
+              "count inflates the scorecard; inspect rows with raw_output set")
     print(f"[time] {elapsed / 60:.1f} min for {len(todo)} reports "
           f"({elapsed / max(len(todo), 1):.2f} s/report)")
     print(f"[done] wrote {output_path}")
