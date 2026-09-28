@@ -367,12 +367,15 @@ def main():
         test_ids = template["StudyInstanceUID"].tolist()
         if debug:
             test_ids = test_ids[: int(cfg.get("debug_n_studies", 24))]
+        # dataset_kwargs already carries series_root (pointed at train_series);
+        # override it in a copy rather than passing it twice.
+        test_kwargs = dict(dataset_kwargs)
+        test_kwargs["series_root"] = cfg.get("test_series_root", "test_series")
         test_ds = KneeStudyDataset(
             series_df=test_series,
             study_ids=test_ids,
             labels=None,
-            series_root=cfg.get("test_series_root", "test_series"),
-            **dataset_kwargs,
+            **test_kwargs,
         )
         test_loader = DataLoader(
             test_ds,
