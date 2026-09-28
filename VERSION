@@ -1,4 +1,4 @@
-v12-test-series-root 2026-09-28
+v13-derived-labels 2026-09-28
 
 Bump this line whenever the pipeline changes. The Kaggle dataset that feeds
 this code is refreshed by hand, so a run can silently use stale code; every

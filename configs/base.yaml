@@ -21,13 +21,23 @@ debug_max_steps: 2
 # ---- data / preprocessing ----
 img_size: 224
 slices_per_series: 6      # decoded and kept per series
-max_series: 4             # series slots kept per study
+# 6 covers every distinct (plane, fluid, fat-sat) slot the dataset contains
+# (max 6, mean 4.8), so studies stop losing series to select_series's tie-break
+# on group size — which is arbitrary when, as usual, every slot holds exactly
+# one series.
+max_series: 6             # series slots kept per study
 series_slot_keys:         # which columns define a distinct series "slot"
   - Anatomical_Plane
   - Fluid_Sensitive
   - Fat_Suppression
 train_series_root: train_series
 test_series_root: test_series
+
+# Report-derived labels written by extract_labels.py. A relative path resolves
+# against work_dir; on Kaggle point this at the attached dataset instead, e.g.
+# /kaggle/input/rsne-derived-labels/labels_derived.csv, because /kaggle/working
+# does not survive between sessions.
+derived_labels: labels_derived.csv
 
 # ---- model ----
 backbone: resnet34

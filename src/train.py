@@ -234,6 +234,48 @@ def write_submission(data_dir, work_dir, labels, predictions):
     return out
 
 
+def load_training_labels(train_df, labels, cfg):
+    """Assemble the label table the model trains on.
+
+    Only 58 of 4407 studies carry gold labels — far too few to train on. That
+    is the whole point of extract_labels.py, which derives labels for the rest
+    from their reports. Gold wins wherever both exist: those are the only
+    labels a radiologist set from the images rather than from the text.
+    """
+    frames = []
+    derived_path = Path(str(cfg.get("derived_labels") or "labels_derived.csv"))
+    if not derived_path.is_absolute():
+        derived_path = Path(cfg.get("work_dir", "work")) / derived_path
+    if derived_path.exists():
+        derived = pd.read_csv(derived_path)
+        keep = [c for c in labels if c in derived.columns]
+        if keep:
+            sub = derived[["StudyInstanceUID"] + keep].copy()
+            # -1 is a finding the extractor could not read. Turn it into NaN so
+            # masked_bce ignores the cell instead of training on it as a 0.
+            sub[keep] = sub[keep].replace(-1, np.nan)
+            frames.append(sub)
+            print(f"[labels] {len(sub)} studies from {derived_path}")
+    else:
+        print(f"[labels] {derived_path} not found — training on gold labels only")
+
+    present = [c for c in labels if c in train_df.columns]
+    if present:
+        gold = train_df.loc[
+            train_df[present].notna().any(axis=1), ["StudyInstanceUID"] + present
+        ].copy()
+        frames.append(gold)
+        print(f"[labels] {len(gold)} gold studies override derived on overlap")
+
+    if not frames:
+        return pd.DataFrame(columns=["StudyInstanceUID"] + labels)
+    merged = pd.concat(frames, ignore_index=True)
+    # Gold is appended last, so keep="last" is what makes it win the overlap.
+    merged = merged.drop_duplicates(subset="StudyInstanceUID", keep="last")
+    merged = merged.reindex(columns=["StudyInstanceUID"] + labels)
+    return merged[merged[labels].notna().any(axis=1)].reset_index(drop=True)
+
+
 def main():
     args = parse_args()
     cfg = load_config(args.config)
@@ -259,14 +301,12 @@ def main():
     if train_df is None or train_series is None:
         raise FileNotFoundError("train.csv and train_series.csv are both required")
 
-    present = [c for c in labels if c in train_df.columns]
-    labelled = train_df[train_df[present].notna().any(axis=1)].reset_index(drop=True)
-    print(f"[labels] {len(labelled)}/{len(train_df)} studies carry at least one label")
+    labelled = load_training_labels(train_df, labels, cfg)
+    print(f"[labels] training on {len(labelled)}/{len(train_df)} studies")
     if len(labelled) < 50:
         print(
-            "[labels] WARNING: that is far too few to train on. This dataset is "
-            "almost certainly a weak-supervision problem — the labels for the "
-            "remaining studies have to be derived from the Report column first. "
+            "[labels] WARNING: that is far too few to train on, which means "
+            "labels_derived.csv is missing — run extract_labels.py first. "
             "Training below is a pipeline smoke test, not a real model."
         )
 
