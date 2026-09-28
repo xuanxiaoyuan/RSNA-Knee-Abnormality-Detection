@@ -120,7 +120,13 @@ def select_series(series_df, max_series, slot_keys=DEFAULT_SLOT_KEYS):
 
 
 class KneeStudyDataset(Dataset):
-    """One item == one study, flattened to (T, H, W) grayscale slices."""
+    """One item == one study, flattened to (T, H, W) grayscale slices.
+
+    Also emits a (T,) mask that is 1 on real slices and 0 on the black padding.
+    The model needs it: studies hold 3-14 series and get padded up to a fixed
+    slot count, so without the mask a short study's findings are averaged
+    against black filler.
+    """
 
     def __init__(
         self,
@@ -176,21 +182,26 @@ class KneeStudyDataset(Dataset):
         # Pad or truncate to a fixed T so batches stack, and pad rather than
         # error so a study with missing series still contributes.
         target = self.slices_per_study
+        n_real = min(vol.shape[0], target)
         if vol.shape[0] < target:
             pad = np.zeros((target - vol.shape[0], self.img_size, self.img_size), np.float32)
             vol = np.concatenate([vol, pad], axis=0)
         else:
             vol = vol[:target]
 
+        mask = np.zeros(target, dtype=np.float32)
+        mask[:n_real] = 1.0
         image = torch.from_numpy(np.ascontiguousarray(vol))
+        mask = torch.from_numpy(mask)
         if self.labels is None:
-            return image, study_uid
-        return image, torch.from_numpy(self.labels[index]), study_uid
+            return image, mask, study_uid
+        return image, torch.from_numpy(self.labels[index]), mask, study_uid
 
 
 def collate_studies(batch):
     images = torch.stack([b[0] for b in batch])
+    masks = torch.stack([b[-2] for b in batch])
     study_ids = [b[-1] for b in batch]
-    if len(batch[0]) == 2:
-        return images, study_ids
-    return images, torch.stack([b[1] for b in batch]), study_ids
+    if len(batch[0]) == 3:
+        return images, masks, study_ids
+    return images, torch.stack([b[1] for b in batch]), masks, study_ids

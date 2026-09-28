@@ -157,14 +157,15 @@ def macro_auc(y_true, y_score):
 def run_epoch(model, loader, optimizer, scaler, device, use_amp, max_steps=None):
     model.train()
     total, seen = 0.0, 0
-    for step, (images, targets, _) in enumerate(loader):
+    for step, (images, targets, mask, _) in enumerate(loader):
         if max_steps is not None and step >= max_steps:
             break
         images = images.to(device, non_blocking=True)
         targets = targets.to(device, non_blocking=True)
+        mask = mask.to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         with _autocast(device.type, use_amp):
-            loss = masked_bce(model(images), targets)
+            loss = masked_bce(model(images, mask), targets)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -177,10 +178,11 @@ def evaluate(model, loader, device, use_amp):
     model.eval()
     logits, targets = [], []
     with torch.no_grad():
-        for images, target, _ in loader:
+        for images, target, mask, _ in loader:
             images = images.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
             with _autocast(device.type, use_amp):
-                out = model(images)
+                out = model(images, mask)
             logits.append(out.float().cpu().numpy())
             targets.append(target.numpy())
     if not logits:
@@ -192,10 +194,11 @@ def predict(model, loader, device, use_amp):
     model.eval()
     predictions = {}
     with torch.no_grad():
-        for images, study_ids in loader:
+        for images, mask, study_ids in loader:
             images = images.to(device, non_blocking=True)
+            mask = mask.to(device, non_blocking=True)
             with _autocast(device.type, use_amp):
-                out = model(images)
+                out = model(images, mask)
             probs = torch.sigmoid(out.float()).cpu().numpy()
             for study_uid, row in zip(study_ids, probs):
                 predictions[study_uid] = row

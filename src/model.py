@@ -28,13 +28,19 @@ class KneeModel(nn.Module):
             nn.Linear(self.backbone.num_features, n_labels),
         )
 
-    def forward(self, x):
+    def forward(self, x, mask=None):
         # x: (B, T, H, W) grayscale -> fold slices into the batch dim
         batch, n_slices = x.shape[0], x.shape[1]
-        x = x.reshape(batch * n_slices, 1, x.shape[2], x.shape[3])
-        x = x.expand(-1, 3, -1, -1)
-        logits = self.head(self.backbone(x))
-        return logits.reshape(batch, n_slices, -1).mean(dim=1)
+        flat = x.reshape(batch * n_slices, 1, x.shape[2], x.shape[3])
+        flat = flat.expand(-1, 3, -1, -1)
+        logits = self.head(self.backbone(flat)).reshape(batch, n_slices, -1)
+        if mask is None:
+            return logits.mean(dim=1)
+        # The dataset pads short studies with black slices. Averaging those in
+        # drags the study's score toward the all-black response, so weight each
+        # slice instead. clamp keeps a study with no readable series at 0.
+        weights = mask.to(logits.dtype).unsqueeze(-1)
+        return (logits * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1.0)
 
 
 def build_model(cfg, n_labels, device):
