@@ -398,8 +398,10 @@ def main():
             auc, n_scored = evaluate(model, val_loader, device, use_amp)
             print(f"[epoch {epoch}] loss={loss:.4f} val_macro_auc={auc:.4f} "
                   f"({n_scored} labels scored)")
-
-        torch.save(model.state_dict(), work_dir / "model.pt")
+            # Save every epoch, not once at the end. These runs are hours long
+            # and the session hosting them can be killed at any point, which
+            # would otherwise take the only copy of the weights with it.
+            torch.save(model.state_dict(), work_dir / "model.pt")
         print(f"[checkpoint] {work_dir / 'model.pt'}")
     else:
         print("[train] no labelled studies, skipping training and emitting 0.5 baseline")
