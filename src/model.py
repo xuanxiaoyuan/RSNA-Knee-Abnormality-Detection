@@ -43,14 +43,23 @@ class KneeModel(nn.Module):
         return (logits * weights).sum(dim=1) / weights.sum(dim=1).clamp(min=1.0)
 
 
-def build_model(cfg, n_labels, device):
+def build_model(cfg, n_labels, device, pretrained=None):
+    """Build the model.
+
+    pretrained=None defers to the config. Pass False when a checkpoint is about
+    to replace every weight: downloading ImageNet weights only to overwrite them
+    is wasted work, and offline the download fails and silently leaves us at
+    random init instead.
+    """
     torch_home = cfg.get("torch_home")
     if torch_home:
         os.environ["TORCH_HOME"] = str(torch_home)
 
     backbone = cfg.get("backbone", "resnet34")
     dropout = float(cfg.get("dropout", 0.2))
-    wants_pretrained = bool(cfg.get("pretrained", True))
+    wants_pretrained = (
+        bool(cfg.get("pretrained", True)) if pretrained is None else pretrained
+    )
 
     try:
         model = KneeModel(backbone, n_labels, pretrained=wants_pretrained, dropout=dropout)

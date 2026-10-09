@@ -48,6 +48,12 @@ def parse_args():
     parser.add_argument("--config", default="configs/base.yaml")
     parser.add_argument("--debug", dest="debug", action="store_true", default=None)
     parser.add_argument("--no-debug", dest="debug", action="store_false")
+    parser.add_argument(
+        "--checkpoint",
+        default=None,
+        help="Load these weights and skip training, so a submission run only "
+             "has to decode and predict.",
+    )
     return parser.parse_args()
 
 
@@ -304,14 +310,20 @@ def main():
     if train_df is None or train_series is None:
         raise FileNotFoundError("train.csv and train_series.csv are both required")
 
-    labelled = load_training_labels(train_df, labels, cfg)
-    print(f"[labels] training on {len(labelled)}/{len(train_df)} studies")
-    if len(labelled) < 50:
-        print(
-            "[labels] WARNING: that is far too few to train on, which means "
-            "labels_derived.csv is missing — run extract_labels.py first. "
-            "Training below is a pipeline smoke test, not a real model."
-        )
+    if args.checkpoint:
+        # Predict-only: the weights come from the checkpoint, so nothing below
+        # needs the training labels at all.
+        labelled = pd.DataFrame(columns=["StudyInstanceUID"] + labels)
+        print("[labels] predict-only: skipping the training labels")
+    else:
+        labelled = load_training_labels(train_df, labels, cfg)
+        print(f"[labels] training on {len(labelled)}/{len(train_df)} studies")
+        if len(labelled) < 50:
+            print(
+                "[labels] WARNING: that is far too few to train on, which means "
+                "labels_derived.csv is missing — run extract_labels.py first. "
+                "Training below is a pipeline smoke test, not a real model."
+            )
 
     if debug:
         labelled = labelled.head(int(cfg.get("debug_n_studies", 24)))
@@ -336,7 +348,15 @@ def main():
         slot_keys=tuple(cfg.get("series_slot_keys", DEFAULT_SLOT_KEYS)),
     )
 
-    model = build_model(cfg, n_labels, device)
+    # A checkpoint is about to overwrite every weight, so there is nothing to
+    # gain from downloading ImageNet ones first — and offline there is nothing
+    # to download, which would otherwise drop us to a silent random init.
+    model = build_model(
+        cfg, n_labels, device, pretrained=False if args.checkpoint else None
+    )
+    if args.checkpoint:
+        model.load_state_dict(torch.load(args.checkpoint, map_location=device))
+        print(f"[checkpoint] loaded {args.checkpoint}; training skipped")
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(cfg.get("lr", 3e-4)),
@@ -350,7 +370,7 @@ def main():
         pin_memory=device.type == "cuda",
     )
 
-    if len(labelled) > 0:
+    if args.checkpoint is None and len(labelled) > 0:
         work_dir = Path(cfg.get("work_dir", "work"))
         groups = build_groups(
             data_dir,
@@ -403,7 +423,7 @@ def main():
             # would otherwise take the only copy of the weights with it.
             torch.save(model.state_dict(), work_dir / "model.pt")
         print(f"[checkpoint] {work_dir / 'model.pt'}")
-    else:
+    elif args.checkpoint is None:
         print("[train] no labelled studies, skipping training and emitting 0.5 baseline")
 
     test_series = read_metadata(data_dir, "test_series.csv")
