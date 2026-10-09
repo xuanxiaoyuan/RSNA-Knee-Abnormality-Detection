@@ -339,6 +339,23 @@ def main():
 
     label_matrix = labelled.reindex(columns=labels).to_numpy(dtype=np.float32)
 
+    # Decode each study once and reuse the pixels across epochs. DICOM decoding
+    # dominates runtime otherwise, so this is also what makes a longer or
+    # higher-resolution run affordable. null disables it.
+    cache_dir = cfg.get("cache_dir", "cache")
+    if cache_dir and args.checkpoint is None:
+        cache_dir = Path(cache_dir)
+        if not cache_dir.is_absolute():
+            cache_dir = Path(cfg.get("work_dir", "work")) / cache_dir
+        print(f"[cache] decoded slices -> {cache_dir}")
+    else:
+        if cache_dir:
+            # A checkpoint means predict-only: one pass over the test set, so
+            # nothing is decoded twice. Skip the cache rather than spend ~8 GB
+            # of the working dir (and the write time) on a single read.
+            print("[cache] predict-only: single pass, cache disabled")
+        cache_dir = None
+
     dataset_kwargs = dict(
         data_dir=data_dir,
         series_root=cfg.get("train_series_root", "train_series"),
@@ -346,6 +363,7 @@ def main():
         slices_per_series=int(cfg.get("slices_per_series", 6)),
         max_series=int(cfg.get("max_series", 4)),
         slot_keys=tuple(cfg.get("series_slot_keys", DEFAULT_SLOT_KEYS)),
+        cache_dir=cache_dir,
     )
 
     # A checkpoint is about to overwrite every weight, so there is nothing to

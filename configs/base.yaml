@@ -33,6 +33,15 @@ series_slot_keys:         # which columns define a distinct series "slot"
 train_series_root: train_series
 test_series_root: test_series
 
+# Decode-once cache. The first epoch decodes every study and writes it here as
+# uint8; later epochs just load the array. A relative path resolves against
+# work_dir. Set to null to decode every epoch (the old behaviour).
+#
+# Size scales with img_size^2: ~8 GB at 224 for the 4407 training studies, so
+# raising img_size to 384 would need ~23 GB and overrun the working dir — at
+# that point either drop the cache or shrink slices_per_series * max_series.
+cache_dir: cache
+
 # Report-derived labels written by extract_labels.py. A relative path resolves
 # against work_dir; on Kaggle point this at the attached dataset instead, e.g.
 # /kaggle/input/rsne-derived-labels/labels_derived.csv, because /kaggle/working
@@ -54,7 +63,7 @@ batch_size: 4
 epochs: 4
 lr: 0.0003
 weight_decay: 0.0001
-num_workers: 2
+num_workers: 4
 amp: true
 
 # ---- validation ----

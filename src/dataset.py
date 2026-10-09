@@ -6,6 +6,8 @@ other part of the pipeline be developed against the small metadata CSVs.
 
 from __future__ import annotations
 
+import hashlib
+import os
 from pathlib import Path
 
 import cv2
@@ -139,6 +141,7 @@ class KneeStudyDataset(Dataset):
         slices_per_series=6,
         max_series=4,
         slot_keys=DEFAULT_SLOT_KEYS,
+        cache_dir=None,
     ):
         self.data_dir = Path(data_dir)
         self.study_ids = list(study_ids)
@@ -153,13 +156,40 @@ class KneeStudyDataset(Dataset):
             uid: grp for uid, grp in series_df.groupby("StudyInstanceUID", sort=False)
         }
 
+        # Decoding a study costs ~1.5 s against ~0.1 s of GPU, so without this
+        # the loader starves the GPU and every epoch re-reads the same pixels.
+        # The tag folds in every parameter that changes the decoded volume, so
+        # an edit to img_size or the slice counts starts a fresh cache instead
+        # of silently serving arrays of the old shape.
+        self.cache_dir = None
+        if cache_dir is not None:
+            spec = "|".join((
+                str(series_root), str(img_size), str(max_series),
+                str(slices_per_series), ",".join(self.slot_keys),
+            ))
+            self.cache_dir = Path(cache_dir) / hashlib.md5(spec.encode()).hexdigest()[:10]
+
     def __len__(self):
         return len(self.study_ids)
 
     def _load_study(self, study_uid):
+        empty = np.zeros((0, self.img_size, self.img_size), dtype=np.float32)
+
+        cache_file = None
+        if self.cache_dir is not None:
+            cache_file = self.cache_dir / f"{study_uid}.npy"
+            if cache_file.exists():
+                try:
+                    # Stored as uint8 (see below): one byte per pixel instead of
+                    # four, which is what keeps the whole set under Kaggle's
+                    # ~20 GB working dir. The round-trip costs at most 1/510.
+                    return np.load(cache_file).astype(np.float32) / 255.0
+                except Exception as exc:
+                    print(f"[cache] {cache_file} unreadable ({exc}); re-decoding")
+
         rows = self._by_study.get(study_uid)
         if rows is None:
-            return np.zeros((0, self.img_size, self.img_size), dtype=np.float32)
+            return empty
 
         picked = select_series(rows, self.max_series, self.slot_keys)
         chunks = []
@@ -171,9 +201,19 @@ class KneeStudyDataset(Dataset):
             )
             if vol is not None:
                 chunks.append(vol)
-        if not chunks:
-            return np.zeros((0, self.img_size, self.img_size), dtype=np.float32)
-        return np.concatenate(chunks, axis=0)
+        vol = np.concatenate(chunks, axis=0) if chunks else empty
+
+        if cache_file is not None:
+            self.cache_dir.mkdir(parents=True, exist_ok=True)
+            # Write beside the target and rename, so a worker killed mid-write
+            # leaves a .tmp rather than a half-written .npy that a later run
+            # would happily load as garbage. np.save is handed the handle
+            # directly: given a name it appends .npy, which would defeat this.
+            tmp = cache_file.with_name(cache_file.name + ".tmp")
+            with open(tmp, "wb") as fh:
+                np.save(fh, np.rint(vol * 255.0).astype(np.uint8))
+            os.replace(tmp, cache_file)
+        return vol
 
     def __getitem__(self, index):
         study_uid = self.study_ids[index]

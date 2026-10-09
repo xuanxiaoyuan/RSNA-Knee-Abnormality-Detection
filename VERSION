@@ -1,4 +1,4 @@
-v16-predict-only 2026-10-09
+v17-decode-cache 2026-10-09
 
 Bump this line whenever the pipeline changes. The Kaggle dataset that feeds
 this code is refreshed by hand, so a run can silently use stale code; every
