@@ -44,6 +44,13 @@ output: labels_derived.csv
 # Smoke test: set to e.g. 20 to prove the path works before spending hours.
 limit: null
 
+# Label ONLY the 58 gold studies, for a ~2 minute prompt-quality probe that
+# eval_extractor.py then scores. Reads a config instead of a CLI flag so the
+# switch travels with the refreshed dataset rather than needing a hand-edit in
+# the website notebook. Set false to run the full 4407.
+only_gold: true
+
 # Skip studies already present in the output file, so a killed session
-# (12h cap) can be resumed instead of restarted.
+# (12h cap) can be resumed instead of restarted. Ignored by a probe, which
+# re-labels its studies every time.
 resume: true

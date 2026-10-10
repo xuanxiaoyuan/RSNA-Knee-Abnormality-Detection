@@ -317,6 +317,11 @@ def main():
     if args.model:
         cfg["model_name"] = args.model
 
+    # The switch lives in the config, not the CLI, because the config ships in
+    # the Kaggle dataset while the notebook is edited by hand on the site. A
+    # probe-vs-full toggle belongs with the code that gets refreshed anyway.
+    only_gold = bool(args.only_gold) or bool(cfg.get("only_gold", False))
+
     import torch
     from tqdm import tqdm
 
@@ -332,7 +337,7 @@ def main():
         print(f"[warn]   prompt order: {spec_names}")
         print(f"[warn]   submission:   {labels}")
 
-    if args.only_gold:
+    if only_gold:
         # Cheap quality probe: the gold studies are the only ones we can score
         # against, so labelling just those answers "is the prompt any good?"
         # in a minute instead of spending an hour before finding out.
@@ -342,7 +347,11 @@ def main():
         print(f"[gold] restricting to the {len(gold_ids)} gold-labelled studies")
 
     output_path = Path(cfg.get("work_dir", "work")) / cfg.get("output", "labels_derived.csv")
-    done = read_done(output_path, bool(cfg.get("resume", True)))
+    # A probe is re-run for every prompt edit, so it must NOT resume: the same
+    # gold studies are already in the output from the last probe, and skipping
+    # them would silently re-score the previous prompt. The full-run file is
+    # overwritten, which is fine — the probe's whole output is 58 rows.
+    done = read_done(output_path, bool(cfg.get("resume", True)) and not only_gold)
     seen = set(done["StudyInstanceUID"]) if len(done) else set()
 
     todo = train[["StudyInstanceUID", "Report"]].dropna(subset=["Report"])
