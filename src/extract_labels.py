@@ -41,21 +41,87 @@ FINDING_SPECS = [
     ("Lateral Meniscus", "tear, meaning abnormal signal that contacts the "
                          "meniscal surface. Degeneration without surface "
                          "contact = 0"),
-    ("Medial OA", "moderate or large area (about 1 cm or more) of high-grade "
-                  "cartilage loss (>50% thickness) in the MEDIAL tibiofemoral "
-                  "compartment. Mild thinning or chondral irregularity = 0"),
-    ("Lateral OA", "moderate or large area (about 1 cm or more) of high-grade "
-                   "cartilage loss (>50% thickness) in the LATERAL tibiofemoral "
-                   "compartment. Mild thinning or chondral irregularity = 0"),
-    ("PF OA", "moderate or large area (about 1 cm or more) of high-grade "
-              "cartilage loss (>50% thickness) in the PATELLOFEMORAL "
-              "compartment. Mild thinning or chondral irregularity = 0"),
+    ("Medial OA", "osteoarthritis/arthrosis of the MEDIAL tibiofemoral "
+                  "compartment, or a moderate/large area (~1 cm) of high-grade "
+                  "cartilage loss (>50% thickness) there. An explicit "
+                  "OA/chondropathy/chondromalacia label for this compartment "
+                  "counts even when called mild or incipient"),
+    ("Lateral OA", "osteoarthritis/arthrosis of the LATERAL tibiofemoral "
+                   "compartment, or a moderate/large area (~1 cm) of high-grade "
+                   "cartilage loss (>50% thickness) there. An explicit "
+                   "OA/chondropathy/chondromalacia label for this compartment "
+                   "counts even when called mild or incipient"),
+    ("PF OA", "osteoarthritis/arthrosis of the PATELLOFEMORAL compartment, or a "
+              "moderate/large area (~1 cm) of high-grade cartilage loss (>50% "
+              "thickness) in the patellar/trochlear cartilage. An explicit "
+              "OA/chondropathy/chondromalacia label for this compartment counts "
+              "even when called mild or incipient"),
     ("Effusion", "moderate or large joint effusion. Small or trace effusion = 0"),
     ("Synovitis", "synovitis"),
     ("Baker's", "moderate or large Baker cyst. Small cyst = 0"),
     ("Contusion", "bone contusion, i.e. traumatic bone marrow oedema"),
     ("Fracture", "fracture"),
 ]
+
+# The reports are multilingual and the extractor fails by RECALL: a missed
+# finding is almost always one the report *does* name, in Spanish/German/Dutch/
+# Turkish/..., that an English-only prompt failed to map. These are the surface
+# forms that actually occur in this corpus. They are prompt vocabulary, not
+# labels — the model still applies the severity threshold to what it reads.
+FINDING_ALIASES = {
+    "ACL": "ligamento cruzado anterior, LCA (es); vorderes Kreuzband, VKB (de); "
+           "voorste kruisband (nl); ön çapraz bağ (tr); legamento crociato "
+           "anteriore (it); tear = rotura/ruptur/ruptuur/yırtık/rupture/ρήξη",
+    "MCL": "ligamento colateral medial, LCM (es); Innenband, mediales "
+           "Kollateralband (de); mediale collaterale band (nl); medial "
+           "kollateral bağ, iç yan bağ (tr)",
+    "Medial Meniscus": "menisco medial, menisco interno (es); Innenmeniskus (de); "
+                       "mediale meniscus (nl); medial menisküs (tr)",
+    "Lateral Meniscus": "menisco lateral, menisco externo (es); Außenmeniskus "
+                        "(de); laterale meniscus (nl); lateral menisküs (tr)",
+    "Medial OA": "gonartrosis/artrosis femorotibial medial (es); medialer "
+                 "Femorotibial-Arthrose (de); mediale artrose (nl); medial "
+                 "kompartman osteoartrit (tr). cartilage loss = condropatía, "
+                 "pérdida de cartílago (es); Knorpelverlust (de); "
+                 "kraakbeenverlies (nl); kıkırdak kaybı (tr)",
+    "Lateral OA": "artrosis femorotibial lateral (es); laterale "
+                  "Femorotibial-Arthrose (de); laterale artrose (nl); lateral "
+                  "kompartman osteoartrit (tr)",
+    "PF OA": "artrosis femoropatelar/patelofemoral, condropatía rotuliana, "
+             "condromalacia rotuliana (es); Retropatellararthrose, Chondropathie, "
+             "Chondromalazie (de); patellofemorale artrose (nl); patellofemoral "
+             "osteoartrit, kondromalazi patella (tr)",
+    "Effusion": "derrame articular (es); Gelenkerguss (de); gewrichtsvocht, vocht "
+                "(nl); eklem içi sıvı, efüzyon (tr); versamento (it); "
+                "épanchement (fr); efusão, derrame (pt); αρθρικό υγρό (el)",
+    "Synovitis": "sinovitis (es/it); Synovitis (de/nl); sinovit (tr); synovite "
+                 "(fr); υμενίτιδα (el)",
+    "Baker's": "quiste de Baker (es); Bakerzyste (de); Bakercyste (nl); Baker "
+               "kisti (tr); cisti di Baker (it); kyste de Baker (fr)",
+    "Contusion": "contusión ósea, edema óseo (es); Knochenkontusion, "
+                 "Knochenmarködem (de); botcontusie, beenmergoedeem (nl); kemik "
+                 "kontüzyonu, kemik iliği ödemi (tr)",
+    "Fracture": "fractura (es/pt); Fraktur (de); fractuur (nl); fraktür, kırık "
+                "(tr); frattura (it); fracture (fr); κάταγμα (el); перелом (ru)",
+}
+
+# Severity wording is the other half of the multilingual gap: "mäßig" and
+# "belirgin" carry the threshold exactly as "moderate" does, and a model that
+# does not recognise them quietly reads them as a below-threshold mention.
+SEVERITY_BELOW = (
+    "small, trace, mild, minimal, slight, subtle, low-grade (en); leve, ligero, "
+    "mínimo, discreto, incipiente (es); leicht, gering, diskret, minimal (de); "
+    "licht, gering, discreet, minimaal (nl); hafif, minimal, silik (tr); lieve, "
+    "minimo (it); leve (pt); léger (fr)"
+)
+SEVERITY_AT_OR_ABOVE = (
+    "moderate, large, severe, high-grade, complete, full-thickness (en); "
+    "moderado, importante, marcado, severo, grave, acentuado (es); mäßig, "
+    "mittelgradig, ausgeprägt, deutlich, hochgradig, schwer (de); matig, fors, "
+    "uitgebreid, ernstig (nl); orta, belirgin, ileri, yoğun, ciddi (tr); "
+    "moderato, marcato, grave (it); moderado, acentuado, grave (pt); modéré, "
+    "important (fr)"
+)
 
 THINK_BLOCK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.DOTALL | re.IGNORECASE)
 
@@ -69,40 +135,48 @@ VERDICT_LINE = r"^[\s>*-]*(?:\d{{1,2}}\s*[.)\]:]?\s*)?{name}\s*[^\n:;]{{0,15}}?[
 def build_prompt(report, max_chars):
     """Build the labelling prompt.
 
-    The language instruction and the negation rule both matter: the reports
-    arrive in a dozen languages, and "...mediaal?" (a question, not a finding)
-    appears repeatedly in the Dutch ones.
+    Two things drive the wording here. The reports arrive in a dozen languages,
+    so the prompt carries the finding names and the severity words in each of
+    them — the extractor's misses are overwhelmingly findings the report *does*
+    name, just not in English. And "...mediaal?" (a question, not a finding)
+    appears repeatedly in the Dutch reports, hence the differential rule.
     """
     listing = "\n".join(
-        f"{i:>2}. {name:<18} - {desc}" for i, (name, desc) in enumerate(FINDING_SPECS, 1)
+        f"{i:>2}. {name:<18} - {desc}\n"
+        f"      also written: {FINDING_ALIASES[name]}"
+        for i, (name, desc) in enumerate(FINDING_SPECS, 1)
     )
     report = str(report)[:max_chars]
     return (
         "You are a musculoskeletal radiologist labelling knee MRI reports for a "
         "research dataset.\n"
         "Each report may be written in ANY language (English, Spanish, Dutch, "
-        "German, Portuguese, Turkish, French, ...). Read it in its original "
-        "language. Do NOT translate it first.\n\n"
+        "German, Portuguese, Turkish, French, Italian, Greek, Russian, ...). Read "
+        "it in its ORIGINAL language and do NOT translate it first.\n\n"
         "For each of the 12 findings, decide whether the report describes it as "
         "PRESENT under the SEVERITY THRESHOLD given. The threshold is part of the "
         "question: a finding that is mentioned but below threshold counts as 0.\n\n"
         f"{listing}\n\n"
+        "Severity wording carries the verdict in every language:\n"
+        f"- BELOW threshold, answer 0: {SEVERITY_BELOW}\n"
+        f"- AT or ABOVE threshold, answer 1: {SEVERITY_AT_OR_ABOVE}\n\n"
         "Rules:\n"
-        "- MOST FINDINGS ARE ABSENT. Across this dataset only about a third of "
-        "the 12 slots are positive in a given report, and some findings (MCL, "
-        "Baker's) are rare. Answer 1 only when the report clearly describes the "
-        "finding at or above the threshold.\n"
-        "- The most common error is counting a below-threshold mention as "
-        "present. Words like small, mild, low-grade, trace, minimal, minor, "
-        "subtle, slight, and mild degenerative change mean 0, even though the "
-        "finding is mentioned. Only moderate, large, severe, high-grade, "
-        "complete or full-thickness findings meet the thresholds.\n"
-        "- If you are unsure whether the threshold is met, answer 0.\n"
-        "- A finding that is explicitly denied (\"no fracture\") counts as 0.\n"
+        "- Most of the 12 slots are negative in any one report, so answer 1 only "
+        "when the report clearly describes the finding at or above the threshold.\n"
+        "- BUT the usual mistake - and the one to guard against - is answering 0 "
+        "for a finding the report DOES name in another language. Before you write "
+        "a 0, match the report's exact wording against the 'also written' list "
+        "and the severity words above. If it names the finding at or above "
+        "threshold, the answer is 1, whatever the language.\n"
+        "- A finding is 0 when the report denies it (\"no fracture\"), never "
+        "mentions it, or mentions it only below the threshold.\n"
         "- A finding raised only as a question or a differential, and not "
         "confirmed, counts as 0.\n"
         "- Postoperative, chronic or degenerative changes count only if they "
-        "meet the threshold above.\n\n"
+        "meet the threshold above.\n"
+        "- For the three OA findings: an explicit osteoarthritis / arthrosis / OA "
+        "or chondropathy / chondromalacia report for that compartment counts as "
+        "1, even when the report calls it mild or incipient.\n\n"
         "Report:\n"
         '"""\n'
         f"{report}\n"
@@ -116,7 +190,7 @@ def build_prompt(report, max_chars):
         "written above, a colon, then 0 or 1, then a dash and a reason of AT MOST "
         "SIX WORDS. You are judged on the 0 or the 1, but the reason is what "
         "forces you to check whether the report actually meets the threshold - so "
-        "let those few words quote what decided it.\n"
+        "let those few words quote what decided it, in its original language.\n"
         "0 = absent, explicitly denied, or mentioned only below the threshold. "
         "1 = present at or above the threshold.\n"
         "Write all 12 lines, in order, and never skip a line. If you are running "

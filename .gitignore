@@ -18,3 +18,10 @@ train_series.csv
 test.csv
 test_series.csv
 sample_submission.csv
+
+# Derived artefacts. The labels come from the competition reports and the work
+# dir holds the decode cache and checkpoints — neither is source, and the repo
+# is public like everything else.
+labels_derived.csv
+work/
+

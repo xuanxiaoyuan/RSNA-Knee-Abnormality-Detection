@@ -1,4 +1,4 @@
-v17-decode-cache 2026-10-09
+v18-multilingual-prompt 2026-10-10
 
 Bump this line whenever the pipeline changes. The Kaggle dataset that feeds
 this code is refreshed by hand, so a run can silently use stale code; every
