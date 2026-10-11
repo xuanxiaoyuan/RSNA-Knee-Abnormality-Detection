@@ -19,6 +19,29 @@ from torch.utils.data import Dataset
 
 DEFAULT_SLOT_KEYS = ("Anatomical_Plane", "Fluid_Sensitive", "Fat_Suppression")
 
+# Protocol slot identity for the model's per-series embedding. A series is keyed
+# by its (plane, fluid) metadata, NOT by its position in the picked list: that
+# order is arbitrary (select_series sorts by group size), so a position key
+# would hand a different series the same slot from study to study. Index 0 is
+# reserved for padding (an absent series). The dataset emits these ids and the
+# model looks them up, so both sides share this count.
+PLANE_ORDER = ("Sagittal", "Coronal", "Axial")
+FLUID_VALUES = (0, 1)
+N_SLOTS = 1 + len(PLANE_ORDER) * len(FLUID_VALUES)
+
+
+def slot_id(plane, fluid):
+    """Map a series' protocol metadata to its embedding index (0 = unknown)."""
+    try:
+        plane_idx = PLANE_ORDER.index(plane)
+    except ValueError:
+        return 0
+    try:
+        fluid_bit = 1 if int(fluid) == 1 else 0
+    except (TypeError, ValueError):
+        fluid_bit = 0
+    return 1 + plane_idx * len(FLUID_VALUES) + fluid_bit
+
 
 def _slice_location(ds):
     """Position of a slice along the acquisition normal.
@@ -122,12 +145,15 @@ def select_series(series_df, max_series, slot_keys=DEFAULT_SLOT_KEYS):
 
 
 class KneeStudyDataset(Dataset):
-    """One item == one study, flattened to (T, H, W) grayscale slices.
+    """One item == one study, as (S, K, H, W) grayscale slices plus an (S, K) mask.
 
-    Also emits a (T,) mask that is 1 on real slices and 0 on the black padding.
-    The model needs it: studies hold 3-14 series and get padded up to a fixed
-    slot count, so without the mask a short study's findings are averaged
-    against black filler.
+    S is the series slot count, K the slices kept per series. A study holds
+    3-14 series, so S is padded up to `max_series`, and a series with fewer than
+    K slices leaves trailing black slices in K. The mask is 1 on real slices and
+    0 on that padding. The series dimension is kept *separate* from the slices
+    rather than flattened into one (S*K,) run: the model needs the grouping to
+    tell which slices belong to the same series, and a flat concatenation threw
+    that structure away before the model could see it.
     """
 
     def __init__(
@@ -151,7 +177,6 @@ class KneeStudyDataset(Dataset):
         self.slices_per_series = slices_per_series
         self.max_series = max_series
         self.slot_keys = tuple(slot_keys)
-        self.slices_per_study = max_series * slices_per_series
         self._by_study = {
             uid: grp for uid, grp in series_df.groupby("StudyInstanceUID", sort=False)
         }
@@ -163,8 +188,11 @@ class KneeStudyDataset(Dataset):
         # of silently serving arrays of the old shape.
         self.cache_dir = None
         if cache_dir is not None:
+            # "series-v2" pins the cached layout: an older cache held a flat
+            # (S*K, H, W) array without slot ids, which would load mostly right
+            # into the new (S, K, H, W) reader and silently mis-group slices.
             spec = "|".join((
-                str(series_root), str(img_size), str(max_series),
+                "series-v2", str(series_root), str(img_size), str(max_series),
                 str(slices_per_series), ",".join(self.slot_keys),
             ))
             self.cache_dir = Path(cache_dir) / hashlib.md5(spec.encode()).hexdigest()[:10]
@@ -173,75 +201,87 @@ class KneeStudyDataset(Dataset):
         return len(self.study_ids)
 
     def _load_study(self, study_uid):
-        empty = np.zeros((0, self.img_size, self.img_size), dtype=np.float32)
+        """Return (volume, mask, slots): (S, K, H, W), (S, K), (S,).
+
+        volume and mask are padded to the fixed (max_series, slices_per_series)
+        shape so batches stack; the mask is 1 on real slices and 0 on the
+        padding. slots holds the per-series embedding index from `slot_id`
+        (0 for a padding slot).
+        """
+        shape = (self.max_series, self.slices_per_series, self.img_size, self.img_size)
+        vol = np.zeros(shape, dtype=np.float32)
+        mask = np.zeros(shape[:2], dtype=np.float32)
+        slots = np.zeros(self.max_series, dtype=np.int64)
 
         cache_file = None
         if self.cache_dir is not None:
-            cache_file = self.cache_dir / f"{study_uid}.npy"
+            cache_file = self.cache_dir / f"{study_uid}.npz"
             if cache_file.exists():
                 try:
-                    # Stored as uint8 (see below): one byte per pixel instead of
-                    # four, which is what keeps the whole set under Kaggle's
-                    # ~20 GB working dir. The round-trip costs at most 1/510.
-                    return np.load(cache_file).astype(np.float32) / 255.0
+                    # Bundled as .npz (uint8 volume + uint8 mask + slot ids):
+                    # one byte per pixel instead of four keeps the whole set
+                    # under Kaggle's ~20 GB working dir, and the mask rides
+                    # along because it cannot be re-derived from pixel content —
+                    # a real slice may legitimately be black.
+                    with np.load(cache_file) as cached:
+                        return (cached["vol"].astype(np.float32) / 255.0,
+                                cached["mask"].astype(np.float32),
+                                cached["slot"].astype(np.int64))
                 except Exception as exc:
                     print(f"[cache] {cache_file} unreadable ({exc}); re-decoding")
 
         rows = self._by_study.get(study_uid)
-        if rows is None:
-            return empty
-
-        picked = select_series(rows, self.max_series, self.slot_keys)
-        chunks = []
-        for series_uid in picked["SeriesInstanceUID"]:
-            vol = read_series(
-                self.data_dir / self.series_root / study_uid / series_uid,
-                self.img_size,
-                n_keep=self.slices_per_series,
-            )
-            if vol is not None:
-                chunks.append(vol)
-        vol = np.concatenate(chunks, axis=0) if chunks else empty
+        if rows is not None:
+            picked = select_series(rows, self.max_series, self.slot_keys)
+            for slot, (_, row) in enumerate(picked.iterrows()):
+                if slot >= self.max_series:
+                    break
+                slots[slot] = slot_id(row.get("Anatomical_Plane"),
+                                      row.get("Fluid_Sensitive"))
+                series = read_series(
+                    self.data_dir / self.series_root / study_uid /
+                    row["SeriesInstanceUID"],
+                    self.img_size,
+                    n_keep=self.slices_per_series,
+                )
+                if series is None:
+                    continue
+                k = min(series.shape[0], self.slices_per_series)
+                vol[slot, :k] = series[:k]
+                mask[slot, :k] = 1.0
 
         if cache_file is not None:
             self.cache_dir.mkdir(parents=True, exist_ok=True)
             # Write beside the target and rename, so a worker killed mid-write
-            # leaves a .tmp rather than a half-written .npy that a later run
-            # would happily load as garbage. np.save is handed the handle
-            # directly: given a name it appends .npy, which would defeat this.
+            # leaves a .tmp rather than a half-written file that a later run
+            # would happily load as garbage.
             tmp = cache_file.with_name(cache_file.name + ".tmp")
             with open(tmp, "wb") as fh:
-                np.save(fh, np.rint(vol * 255.0).astype(np.uint8))
+                np.savez(fh,
+                         vol=np.rint(vol * 255.0).astype(np.uint8),
+                         mask=mask.astype(np.uint8),
+                         slot=slots.astype(np.uint8))
             os.replace(tmp, cache_file)
-        return vol
+        return vol, mask, slots
 
     def __getitem__(self, index):
         study_uid = self.study_ids[index]
-        vol = self._load_study(study_uid)
-
-        # Pad or truncate to a fixed T so batches stack, and pad rather than
-        # error so a study with missing series still contributes.
-        target = self.slices_per_study
-        n_real = min(vol.shape[0], target)
-        if vol.shape[0] < target:
-            pad = np.zeros((target - vol.shape[0], self.img_size, self.img_size), np.float32)
-            vol = np.concatenate([vol, pad], axis=0)
-        else:
-            vol = vol[:target]
-
-        mask = np.zeros(target, dtype=np.float32)
-        mask[:n_real] = 1.0
+        vol, mask, slots = self._load_study(study_uid)
         image = torch.from_numpy(np.ascontiguousarray(vol))
         mask = torch.from_numpy(mask)
+        slots = torch.from_numpy(slots)
         if self.labels is None:
-            return image, mask, study_uid
-        return image, torch.from_numpy(self.labels[index]), mask, study_uid
+            return image, mask, slots, study_uid
+        return image, torch.from_numpy(self.labels[index]), mask, slots, study_uid
 
 
 def collate_studies(batch):
+    # Sample layouts: train (image, label, mask, slots, uid); test
+    # (image, mask, slots, uid). Indexing from the end keeps both working.
     images = torch.stack([b[0] for b in batch])
-    masks = torch.stack([b[-2] for b in batch])
+    masks = torch.stack([b[-3] for b in batch])
+    slots = torch.stack([b[-2] for b in batch])
     study_ids = [b[-1] for b in batch]
-    if len(batch[0]) == 3:
-        return images, masks, study_ids
-    return images, torch.stack([b[1] for b in batch]), masks, study_ids
+    if len(batch[0]) == 4:
+        return images, masks, slots, study_ids
+    return images, torch.stack([b[1] for b in batch]), masks, slots, study_ids
