@@ -37,10 +37,14 @@ test_series_root: test_series
 # uint8; later epochs just load the array. A relative path resolves against
 # work_dir. Set to null to decode every epoch (the old behaviour).
 #
+# Absolute on purpose: work_dir is the notebook's version output, so a relative
+# path there would publish the whole ~8 GB of .npy files as the run's Output
+# (and make `kaggle kernels output` download them).
+#
 # Size scales with img_size^2: ~8 GB at 224 for the 4407 training studies, so
-# raising img_size to 384 would need ~23 GB and overrun the working dir — at
-# that point either drop the cache or shrink slices_per_series * max_series.
-cache_dir: cache
+# raising img_size to 384 would need ~23 GB — at that point shrink
+# slices_per_series * max_series or drop the cache.
+cache_dir: /tmp/rsne-cache
 
 # Report-derived labels written by extract_labels.py. A relative path resolves
 # against work_dir; on Kaggle point this at the attached dataset instead, e.g.
@@ -60,7 +64,7 @@ torch_home: null
 
 # ---- optimisation ----
 batch_size: 4
-epochs: 4
+epochs: 20
 lr: 0.0003
 weight_decay: 0.0001
 num_workers: 4

@@ -136,13 +136,18 @@ def masked_bce(logits, targets):
     """BCE that ignores targets we do not have.
 
     train.csv leaves most label cells empty; treating those as 0 would teach
-    the model that nearly everything is absent.
+    the model that nearly everything is absent. Unknown cells arrive as NaN,
+    and they must be replaced *before* the BCE runs: masking the loss
+    afterwards does nothing, because NaN * 0 is still NaN. That single NaN then
+    poisons the epoch sum, and the AMP GradScaler sees a non-finite loss and
+    silently skips the optimiser step for that batch.
     """
-    loss = torch.nn.functional.binary_cross_entropy_with_logits(
-        logits, targets, reduction="none"
-    )
     mask = ~torch.isnan(targets)
-    return (loss * mask).sum() / mask.sum().clamp(min=1.0)
+    known = torch.nan_to_num(targets, nan=0.0)
+    loss = torch.nn.functional.binary_cross_entropy_with_logits(
+        logits, known, reduction="none"
+    )
+    return (loss * mask).sum() / mask.sum().clamp(min=1)
 
 
 def macro_auc(y_true, y_score):
@@ -429,11 +434,17 @@ def main():
 
         epochs = 1 if debug else int(cfg.get("epochs", 4))
         max_steps = int(cfg.get("debug_max_steps", 2)) if debug else None
+        # Decay to ~0 by the last epoch. The decode cache makes long runs cheap,
+        # and a flat LR that long starts to overfit the noisy derived labels;
+        # annealing keeps the final weights the most converged rather than the
+        # most overfit, so the last saved model.pt is the one worth keeping.
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
         for epoch in range(epochs):
             loss = run_epoch(
                 model, train_loader, optimizer, scaler, device, use_amp, max_steps
             )
             auc, n_scored = evaluate(model, val_loader, device, use_amp)
+            scheduler.step()
             print(f"[epoch {epoch}] loss={loss:.4f} val_macro_auc={auc:.4f} "
                   f"({n_scored} labels scored)")
             # Save every epoch, not once at the end. These runs are hours long
