@@ -383,11 +383,28 @@ def main():
     if args.checkpoint:
         model.load_state_dict(torch.load(args.checkpoint, map_location=device))
         print(f"[checkpoint] loaded {args.checkpoint}; training skipped")
+    # Two param groups. The backbone is mostly frozen and its few trainable
+    # blocks crawl at a tiny LR so the pretrained features are not wrecked, while
+    # the head learns fast — the two rates differ by two orders of magnitude in
+    # the recipe this follows. Frozen params are skipped so AdamW does not carry
+    # them. Printing the counts is how we confirm the freeze actually applied.
+    base_lr = float(cfg.get("lr", 3e-4))
+    backbone_params, head_params = [], []
+    for name, param in model.named_parameters():
+        if not param.requires_grad:
+            continue
+        (backbone_params if name.startswith("backbone.") else head_params).append(param)
+    lr_backbone = float(cfg.get("lr_backbone", base_lr))
+    lr_head = float(cfg.get("lr_head", base_lr))
     optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=float(cfg.get("lr", 3e-4)),
+        [
+            {"params": backbone_params, "lr": lr_backbone},
+            {"params": head_params, "lr": lr_head},
+        ],
         weight_decay=float(cfg.get("weight_decay", 1e-4)),
     )
+    print(f"[opt] backbone {len(backbone_params)} tensors @ lr={lr_backbone} | "
+          f"head {len(head_params)} tensors @ lr={lr_head}")
     scaler = _grad_scaler(device.type, use_amp)
     loader_kwargs = dict(
         batch_size=int(cfg.get("batch_size", 4)),

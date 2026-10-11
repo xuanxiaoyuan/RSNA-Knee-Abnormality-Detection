@@ -1,4 +1,4 @@
-v21-series-aware-head 2026-10-11
+v22-dinov2-small 2026-10-11
 
 Bump this line whenever the pipeline changes. The Kaggle dataset that feeds
 this code is refreshed by hand, so a run can silently use stale code; every
