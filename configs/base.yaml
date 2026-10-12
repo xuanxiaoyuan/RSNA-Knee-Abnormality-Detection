@@ -54,13 +54,13 @@ derived_labels: labels_derived.csv
 
 # ---- model ----
 # DINOv2-small: a self-supervised ViT that transfers far better than an
-# ImageNet ResNet. Only the last `freeze_backbone_blocks` transformer blocks
+# ImageNet ResNet. Only the last `trainable_backbone_blocks` transformer blocks
 # stay trainable; everything before them is frozen — the main regularizer
 # against overfitting the ~3.5k weakly-labelled studies.
 backbone: vit_small_patch14_dinov2.lvd142m
 pretrained: true
 dropout: 0.2
-freeze_backbone_blocks: 6
+trainable_backbone_blocks: 9
 
 # For the OFFLINE submission run timm cannot download weights. Attach a dataset
 # holding the timm cache and point this at it, e.g. /kaggle/input/timm-cache.
@@ -69,13 +69,13 @@ torch_home: null
 
 # ---- optimisation ----
 batch_size: 4
-# DINOv2 is heavier per step than resnet34, so fewer epochs both to fit the run
-# budget and to match the frozen-backbone recipe. Weights are saved every epoch,
-# so a timeout still leaves the latest checkpoint.
-epochs: 12
+# Augmentation delays the overfit, so the val peak lands later than it did
+# without it. Only the best epoch is kept (see train.py), so a few extra epochs
+# cost time, not score.
+epochs: 15
 lr: 0.0003            # fallback for whichever lr_* is unset
 lr_backbone: 0.000008 # mostly-frozen ViT: two orders below the head
-lr_head: 0.001
+lr_head: 0.0003       # was 1e-3: at that rate the head memorised the labels
 weight_decay: 0.0001
 num_workers: 4
 amp: true

@@ -132,6 +132,16 @@ def _grad_scaler(device_type, enabled):
         return torch.cuda.amp.GradScaler(enabled=enabled)
 
 
+def _seed_worker(worker_id):
+    """Give each DataLoader worker its own numpy stream.
+
+    The augmentations draw from numpy, and forked workers inherit the parent's
+    seed — so without this every worker would produce the *same* random rotation
+    and jitter, and augmentation would add far less diversity than it looks.
+    """
+    np.random.seed((torch.initial_seed() + worker_id) % (2 ** 32))
+
+
 def masked_bce(logits, targets):
     """BCE that ignores targets we do not have.
 
@@ -440,6 +450,7 @@ def main():
                 labelled.iloc[train_idx]["StudyInstanceUID"])],
             study_ids=labelled.iloc[train_idx]["StudyInstanceUID"].tolist(),
             labels=label_matrix[train_idx],
+            augment=True,
             **dataset_kwargs,
         )
         val_ds = KneeStudyDataset(
@@ -447,9 +458,12 @@ def main():
                 labelled.iloc[val_idx]["StudyInstanceUID"])],
             study_ids=labelled.iloc[val_idx]["StudyInstanceUID"].tolist(),
             labels=label_matrix[val_idx],
+            augment=False,
             **dataset_kwargs,
         )
-        train_loader = DataLoader(train_ds, shuffle=True, **loader_kwargs)
+        train_loader = DataLoader(
+            train_ds, shuffle=True, worker_init_fn=_seed_worker, **loader_kwargs
+        )
         val_loader = DataLoader(val_ds, shuffle=False, **loader_kwargs)
 
         epochs = 1 if debug else int(cfg.get("epochs", 4))
@@ -457,8 +471,10 @@ def main():
         # Decay to ~0 by the last epoch. The decode cache makes long runs cheap,
         # and a flat LR that long starts to overfit the noisy derived labels;
         # annealing keeps the final weights the most converged rather than the
-        # most overfit, so the last saved model.pt is the one worth keeping.
+        # most overfit.
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs)
+        best_auc = float("-inf")
+        best_epoch = -1
         for epoch in range(epochs):
             loss = run_epoch(
                 model, train_loader, optimizer, scaler, device, use_amp, max_steps
@@ -467,11 +483,17 @@ def main():
             scheduler.step()
             print(f"[epoch {epoch}] loss={loss:.4f} val_macro_auc={auc:.4f} "
                   f"({n_scored} labels scored)")
-            # Save every epoch, not once at the end. These runs are hours long
-            # and the session hosting them can be killed at any point, which
-            # would otherwise take the only copy of the weights with it.
-            torch.save(model.state_dict(), work_dir / "model.pt")
-        print(f"[checkpoint] {work_dir / 'model.pt'}")
+            # Keep the best-scoring epoch, not the last. Every long run so far
+            # overfit: val peaked early (epoch 4 at the worst) and then fell
+            # while train loss kept dropping, so saving the final weights threw
+            # away the peak. Saving on improvement also means a killed session
+            # still leaves the best weights behind.
+            if auc == auc and auc > best_auc:  # NaN-safe
+                best_auc, best_epoch = auc, epoch
+                torch.save(model.state_dict(), work_dir / "model.pt")
+                print(f"[checkpoint] epoch {epoch} best so far (val={auc:.4f})")
+        print(f"[checkpoint] {work_dir / 'model.pt'} from epoch {best_epoch} "
+              f"(val={best_auc:.4f})")
     elif args.checkpoint is None:
         print("[train] no labelled studies, skipping training and emitting 0.5 baseline")
 

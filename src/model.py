@@ -86,12 +86,12 @@ class KneeModel(nn.Module):
         dropout=0.2,
         n_slots=N_SLOTS,
         d_model=256,
-        freeze_blocks=0,
+        trainable_blocks=0,
     ):
         super().__init__()
         self.backbone = _build_backbone(backbone, pretrained)
-        if freeze_blocks:
-            _freeze_backbone(self.backbone, freeze_blocks)
+        if trainable_blocks:
+            _freeze_backbone(self.backbone, trainable_blocks)
 
         self.register_buffer("img_mean", torch.tensor(_IMG_MEAN).view(1, 3, 1, 1))
         self.register_buffer("img_std", torch.tensor(_IMG_STD).view(1, 3, 1, 1))
@@ -167,7 +167,7 @@ def build_model(cfg, n_labels, device, pretrained=None):
 
     backbone = cfg.get("backbone", "vit_small_patch14_dinov2.lvd142m")
     dropout = float(cfg.get("dropout", 0.2))
-    freeze_blocks = int(cfg.get("freeze_backbone_blocks", 0))
+    trainable_blocks = int(cfg.get("trainable_backbone_blocks", 0))
     wants_pretrained = (
         bool(cfg.get("pretrained", True)) if pretrained is None else pretrained
     )
@@ -175,7 +175,7 @@ def build_model(cfg, n_labels, device, pretrained=None):
     try:
         model = KneeModel(
             backbone, n_labels, pretrained=wants_pretrained, dropout=dropout,
-            freeze_blocks=freeze_blocks,
+            trainable_blocks=trainable_blocks,
         )
     except Exception as exc:
         # Most likely an offline run with no weights cache attached. Degrading
@@ -184,7 +184,7 @@ def build_model(cfg, n_labels, device, pretrained=None):
         print("[warn] falling back to RANDOM INIT — scores will be poor")
         model = KneeModel(
             backbone, n_labels, pretrained=False, dropout=dropout,
-            freeze_blocks=freeze_blocks,
+            trainable_blocks=trainable_blocks,
         )
 
     return model.to(device)

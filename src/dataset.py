@@ -168,6 +168,7 @@ class KneeStudyDataset(Dataset):
         max_series=4,
         slot_keys=DEFAULT_SLOT_KEYS,
         cache_dir=None,
+        augment=False,
     ):
         self.data_dir = Path(data_dir)
         self.study_ids = list(study_ids)
@@ -177,6 +178,9 @@ class KneeStudyDataset(Dataset):
         self.slices_per_series = slices_per_series
         self.max_series = max_series
         self.slot_keys = tuple(slot_keys)
+        # Train only. Applied after the cache is read (see __getitem__), so the
+        # on-disk uint8 arrays stay clean and every epoch draws fresh.
+        self.augment = augment
         self._by_study = {
             uid: grp for uid, grp in series_df.groupby("StudyInstanceUID", sort=False)
         }
@@ -264,9 +268,39 @@ class KneeStudyDataset(Dataset):
             os.replace(tmp, cache_file)
         return vol, mask, slots
 
+    def _augment(self, vol):
+        """Random in-plane affine + photometric jitter on an (S, K, H, W) volume.
+
+        The three runs so far (flat, transformer head, DINOv2 head) all drove
+        train loss toward zero and then lost val — pure memorisation of a few
+        thousand weakly-labelled studies. This is the missing regulariser.
+
+        One geometry per *study*, not per slice, so a slice and its neighbours
+        stay consistent. NO horizontal flip: it would swap medial and lateral,
+        which are distinct labels in several targets. Filled regions go to 0 to
+        match the black padding the mask already ignores.
+        """
+        n_series, n_slices, h, w = vol.shape
+        angle = float(np.random.uniform(-10.0, 10.0))
+        scale = float(np.random.uniform(0.9, 1.1))
+        matrix = cv2.getRotationMatrix2D((w / 2.0, h / 2.0), angle, scale)
+        flat = vol.reshape(n_series * n_slices, h, w)
+        warped = np.empty_like(flat)
+        for i in range(flat.shape[0]):
+            warped[i] = cv2.warpAffine(
+                flat[i], matrix, (w, h),
+                flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0,
+            )
+        vol = warped.reshape(n_series, n_slices, h, w)
+        gain = np.random.uniform(0.9, 1.1, size=(n_series, n_slices, 1, 1))
+        bias = np.random.uniform(-0.05, 0.05, size=(n_series, n_slices, 1, 1))
+        return np.clip(vol * gain + bias, 0.0, 1.0).astype(np.float32)
+
     def __getitem__(self, index):
         study_uid = self.study_ids[index]
         vol, mask, slots = self._load_study(study_uid)
+        if self.augment:
+            vol = self._augment(vol)
         image = torch.from_numpy(np.ascontiguousarray(vol))
         mask = torch.from_numpy(mask)
         slots = torch.from_numpy(slots)
