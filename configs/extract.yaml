@@ -19,6 +19,12 @@ model_name: Qwen/Qwen3-4B-Instruct-2507
 # T4 is Turing: it has no bf16 units, so fp16 is the correct dtype here.
 dtype: float16
 
+# Load the LLM 4-bit (nf4). An 8-9B teacher in fp16 needs ~18GB and OOMs a 16GB
+# T4; nf4 cuts that to ~5GB, which is what lets a bigger/second family be one
+# end of the label ensemble. Off by default (the 4B fits fp16 fine). Also
+# settable per-run with --load-in-4bit.
+load_in_4bit: false
+
 # Memory is set by the LONGEST report in a batch, not the average: padding
 # stretches every sequence in the batch to that length. The longest training
 # report is 4743 chars, so a batch of 16 can want ~7GB of KV cache on top of the

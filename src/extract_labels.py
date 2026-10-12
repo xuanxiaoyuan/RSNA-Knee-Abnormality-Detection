@@ -232,7 +232,7 @@ def parse_answer(text, spec_names):
     return [bits.get(name, -1) for name in spec_names], mode
 
 
-def load_model(model_name, dtype_name, enable_thinking):
+def load_model(model_name, dtype_name, enable_thinking, load_in_4bit=False):
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -253,6 +253,31 @@ def load_model(model_name, dtype_name, enable_thinking):
     tokenizer.padding_side = "left"
     if tokenizer.pad_token_id is None:
         tokenizer.pad_token_id = tokenizer.eos_token_id
+
+    # An 8-9B teacher in fp16 wants ~18GB, over a 16GB T4's headroom. nf4 cuts
+    # the weights to ~5GB, which is what makes a bigger, more diverse teacher
+    # affordable as one end of the ensemble. bitsandbytes is present on Kaggle;
+    # if it is not, falling back to fp16 (and possibly OOMing) is better than
+    # dying, but say so loudly.
+    if load_in_4bit:
+        try:
+            from transformers import BitsAndBytesConfig
+
+            quant = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_compute_dtype=torch.float16,
+                bnb_4bit_use_double_quant=True,
+            )
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name, quantization_config=quant, device_map="auto"
+            )
+            model.eval()
+            print(f"[model] loaded {model_name} 4-bit (nf4) on {model.device}")
+            return model, tokenizer
+        except Exception as exc:
+            print(f"[warn] 4-bit load failed ({exc}); falling back to {dtype_name}")
+
     model = AutoModelForCausalLM.from_pretrained(
         model_name, torch_dtype=dtype, device_map="auto"
     )
@@ -309,6 +334,16 @@ def main():
                         help="label only the studies that already carry gold labels, "
                              "for a one-minute quality probe via eval_extractor.py")
     parser.add_argument("--model", default=None, help="override model_name")
+    parser.add_argument("--output", default=None,
+                        help="override the output FILENAME (joined to work_dir). "
+                             "One file per teacher so several can be merged later.")
+    parser.add_argument("--batch-size", type=int, default=None,
+                        help="override batch_size, for throughput probing")
+    parser.add_argument("--load-in-4bit", action="store_true",
+                        help="load the model 4-bit (nf4) so an 8-9B teacher fits a "
+                             "16GB T4; needs bitsandbytes. Falls back to fp16 if absent.")
+    parser.add_argument("--full", action="store_true",
+                        help="force labelling ALL studies, overriding config only_gold")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -316,11 +351,17 @@ def main():
         cfg["limit"] = args.limit
     if args.model:
         cfg["model_name"] = args.model
+    if args.output:
+        cfg["output"] = args.output
+    if args.batch_size:
+        cfg["batch_size"] = args.batch_size
+    load_in_4bit = bool(args.load_in_4bit) or bool(cfg.get("load_in_4bit", False))
 
     # The switch lives in the config, not the CLI, because the config ships in
     # the Kaggle dataset while the notebook is edited by hand on the site. A
     # probe-vs-full toggle belongs with the code that gets refreshed anyway.
-    only_gold = bool(args.only_gold) or bool(cfg.get("only_gold", False))
+    only_gold = (bool(args.only_gold) or bool(cfg.get("only_gold", False))) \
+        and not args.full
 
     import torch
     from tqdm import tqdm
@@ -358,18 +399,29 @@ def main():
     todo = todo[~todo["StudyInstanceUID"].isin(seen)]
     if cfg.get("limit"):
         todo = todo.head(int(cfg["limit"]))
+    # Length-bucketed batching. A batch is padded to its LONGEST report, so
+    # mixing a 300-char note with a 3900-char one makes the short ones ride
+    # along at a pretence length. Sorting by length first keeps neighbours
+    # similar and was the single biggest throughput cost in the last full run
+    # (33 s per batch of 4). Resume is by StudyInstanceUID, so order is free.
+    if len(todo):
+        todo = (todo.assign(_n=todo["Report"].astype(str).str.len())
+                    .sort_values("_n").drop(columns="_n"))
     print(f"[todo] {len(todo)} reports to label ({len(seen)} already done)")
     if not len(todo):
         print("[done] nothing to do")
         return
 
     model, tokenizer = load_model(
-        cfg["model_name"], cfg.get("dtype", "float16"), bool(cfg.get("enable_thinking", False))
+        cfg["model_name"], cfg.get("dtype", "float16"),
+        bool(cfg.get("enable_thinking", False)), load_in_4bit,
     )
 
     max_chars = int(cfg.get("max_report_chars", 8000))
     batch_size = int(cfg.get("batch_size", 16))
     max_new = int(cfg.get("max_new_tokens", 32))
+    print(f"[cfg] model={cfg['model_name']} batch_size={batch_size} "
+          f"4bit={load_in_4bit} max_new={max_new}")
 
     rows = list(done.to_dict("records")) if len(done) else []
     tally = {"named": 0, "partial": 0, "fail": 0}
